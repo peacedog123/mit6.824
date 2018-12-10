@@ -78,7 +78,7 @@ func doMap(
     reduce := ihash(kv.Key) % nReduce
     name := reduceName(jobName, mapTask, reduce)
     if _, ok := fileMap[name]; !ok {
-      tempFile, err := os.Create(name)
+      tempFile, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
       if err != nil {
         log.Fatalln("can't create the intermediate file: " , err)
       }

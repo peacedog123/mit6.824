@@ -58,6 +58,9 @@ func doReduce(
   defer file.Close()
   enc := json.NewEncoder(file)
 
+  var keys []string
+  holder := make(map[string][]string)
+
   for i := 0; i < nMap; i++ {
     name := reduceName(jobName, i, reduceTask)
     file, err := os.Open(name)
@@ -66,9 +69,6 @@ func doReduce(
       continue
     }
     defer file.Close()
-
-    var keys []string
-    holder := make(map[string][]string)
 
     decoder := json.NewDecoder(file)
     for decoder.More() {
@@ -83,12 +83,12 @@ func doReduce(
       }
       holder[kv.Key] = append(holder[kv.Key], kv.Value)
     }
-    // sort keys
-    sort.Strings(keys)
+  }
+  // sort keys
+  sort.Strings(keys)
 
-    // reduceF
-    for _, key := range keys {
-      enc.Encode(KeyValue{key, reduceF(key, holder[key])})
-    }
+  // reduceF
+  for _, key := range keys {
+    enc.Encode(KeyValue{key, reduceF(key, holder[key])})
   }
 }
