@@ -20,11 +20,9 @@ package raft
 import "sync"
 import "labrpc"
 
-// import "bytes"
-// import "labgob"
-
-
-
+//import "bytes"
+//import "labgob"
+import "fmt"
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -42,6 +40,29 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+// bg_timer tick in 100ms
+const TickInMs int = 100
+
+// election timer tick
+const ElectionTickMax int = 20
+
+// heartbeat timer
+const HeartbeatTickMax int = 2
+
+// NOT_VOTE
+const NOT_VOTE int = -1
+
+type PeerInfo struct {
+  nextIndex int
+  matchIndex int
+}
+
+type Entry struct {
+  Term int
+  Index int
+  Content []byte
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -54,6 +75,44 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+  currentTerm   int
+  voteFor       int
+  log           []Entry
+
+  commitIndex   int
+  lastApplied   int
+
+  peerInfo      []PeerInfo
+
+  role          Role
+
+  //
+  timer         *bg_timer
+}
+
+func (rf *Raft) becomeCandidate() {
+  rf.mu.Lock()
+  defer rf.mu.Unlock()
+  rf.role = Candidate
+  rf.voteFor = rf.me
+  rf.currentTerm++
+}
+
+func (rf *Raft) becomeFollower(term int) {
+  rf.mu.Lock()
+  defer rf.mu.Unlock()
+  rf.role = Follower
+  rf.voteFor = NOT_VOTE
+  rf.currentTerm = term
+}
+
+func (rf *Raft) becomeLeader() {
+  rf.mu.Lock()
+  defer rf.mu.Unlock()
+  rf.role = Leader
+}
+
+func (rf *Raft) tick_func() {
 
 }
 
@@ -64,6 +123,10 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+  rf.mu.Lock()
+  defer rf.mu.Unlock()
+  term = rf.currentTerm
+  isleader = (rf.role == Leader)
 	return term, isleader
 }
 
@@ -115,7 +178,10 @@ func (rf *Raft) readPersist(data []byte) {
 // field names must start with capital letters!
 //
 type RequestVoteArgs struct {
-	// Your data here (2A, 2B).
+  Term            int
+  CandidateId     int
+  LastLogTerm     int
+  LastLogIndex    int
 }
 
 //
@@ -123,7 +189,8 @@ type RequestVoteArgs struct {
 // field names must start with capital letters!
 //
 type RequestVoteReply struct {
-	// Your data here (2A).
+	Term        int
+  VoteGranted bool
 }
 
 //
@@ -132,6 +199,7 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 }
+
 
 //
 // example code to send a RequestVote RPC to a server.
@@ -167,6 +235,44 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+func (rf *Raft) RequestVoteRPC() {
+  // retrieve the
+  var request RequestVoteArgs
+  rf.mu.Lock()
+  request.Term = rf.currentTerm
+  request.CandidateId = rf.me
+  request.LastLogIndex = 0
+  request.LastLogTerm = 0
+  rf.mu.Unlock()
+
+  for index, _ := range rf.peers {
+    if index == rf.me {
+      continue
+    }
+
+    // send rpc parallel
+    go func(arg RequestVoteArgs) {
+      var reply RequestVoteReply
+      ok := rf.sendRequestVote(index, &arg, &reply)
+      if !ok {
+        // TODO
+      }
+    }(request)
+  }
+}
+
+type AppendEntriesArgs struct {
+
+}
+
+type AppendEntriesReply struct {
+
+}
+
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+  ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+  return ok
+}
 
 //
 // the service using Raft (e.g. a k/v server) wants to start
@@ -222,10 +328,20 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+  rf.currentTerm = 0
+  rf.voteFor = NOT_VOTE
+  rf.timer = &bg_timer {
+    stop: false,
+    tick: TickInMs,
+    done: make(chan bool),
+    cb: rf.tick_func,
+  }
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+  // start the bg_timer
+  rf.timer.run()
 
 	return rf
 }
