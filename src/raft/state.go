@@ -3,7 +3,7 @@ package raft
 type Role int
 
 const (
-  Follower Role = iota
-  Candidate
-  Leader
+  RoleFollower Role = iota
+  RoleCandidate
+  RoleLeader
 )
