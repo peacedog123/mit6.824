@@ -125,6 +125,7 @@ func (rf *Raft) becomeCandidate() {
   rf.voteFor = rf.me
   rf.votes[rf.me] = true
   rf.leader = NONE
+  rf.persist()
 }
 
 func (rf *Raft) becomeFollower(term int, leader int) {
@@ -132,12 +133,16 @@ func (rf *Raft) becomeFollower(term int, leader int) {
   rf.role = RoleFollower
   rf.voteFor = NONE
   rf.leader = leader
+  if (term != 0) {
+    rf.persist()
+  }
 }
 
 func (rf *Raft) becomeLeader() {
   rf.reset(rf.currentTerm)
   rf.role = RoleLeader
   rf.leader = rf.me
+  rf.voteFor = rf.me
 }
 
 func (rf *Raft) tickHeartbeat() {
@@ -200,7 +205,7 @@ func (rf *Raft) persist() {
   encoder.Encode(rf.currentTerm)
   encoder.Encode(rf.voteFor)
   num := len(rf.log.unstable)
-  encoder.Encode(len(rf.log.unstable))
+  encoder.Encode(num)
   for i := 0; i < num; i++ {
     encoder.Encode(rf.log.unstable[i])
   }
@@ -231,11 +236,11 @@ func (rf *Raft) readPersist(data []byte) {
   r := bytes.NewBuffer(data)
   decoder := labgob.NewDecoder(r)
   if decoder.Decode(&rf.currentTerm) != nil {
-    rf.currentTerm = 0
+    panic("Decode [currentTerm] failed.")
   }
 
   if decoder.Decode(&rf.voteFor) != nil {
-    rf.voteFor = NONE
+    panic("Decode [voteFor] failed.")
   }
 
   var num int
@@ -248,7 +253,7 @@ func (rf *Raft) readPersist(data []byte) {
     }
 
     if decoder.Decode(&entry) != nil {
-      // TODO panic
+      panic("Decode [entry] failed.")
     }
     rf.log.appendEntry(entry)
   }
@@ -334,6 +339,8 @@ func (rf *Raft) RequestVote(request *RequestVoteArgs, reply *RequestVoteReply) {
     rf.voteFor = request.CandidateId
     rf.resetElectionTimer()
   }
+  // do the persist
+  rf.persist()
 
   return
 }
@@ -563,11 +570,11 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, reply *AppendEntriesRe
   if (request.Term > rf.currentTerm) {
     log.Printf("WHO [%d] TAG [%s] - received request from [%d] term larger. RequestTerm: [%d], CurrentTerm: [%d]",
                 rf.me, "AppendRecv", request.Leader, request.Term, rf.currentTerm)
-
     reply.Term = request.Term
   }
 
   rf.becomeFollower(request.Term, request.Leader)
+
   log.Printf("WHO [%d] TAG [%s] - leader: [%d], CurrentTerm: [%d] become follower",
                 rf.me, "AppendRecv", request.Leader, rf.currentTerm)
 
@@ -632,8 +639,10 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, reply *AppendEntriesRe
     rf.log.setCommitted(newCommit)
     rf.cond.Signal()
   }
-
+  // 用于加速收敛-leader重试时以此为依据
   reply.LastLogIndex = rf.log.getLastLogIndex()
+
+  rf.persist()
 
   log.Printf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. reply status. Success: [%v], LastLogIndex: [%d]",
               rf.me, "AppendRecv", rf.currentTerm, reply.Success, reply.LastLogIndex)
@@ -676,6 +685,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
     isLeader = true
     index = rf.log.getLastLogIndex() + 1
     rf.log.appendCommand(rf.currentTerm, index, command)
+    rf.persist()
     rf.broadcastAppendEntries()
     log.Printf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. Role: [%d]. Leader submit proposal, Index: [%d]",
               rf.me, "Start", rf.currentTerm, rf.role, index)
@@ -752,7 +762,7 @@ func (rf *Raft) advanceCommit() {
   quorum := rf.quorumMatchIndex()
   if (quorum > rf.log.getCommitted()) {
     log.Printf("WHO [%d] TAG [%s] - CurrentTerm: [%d], will commit from [%d] to [%d]",
-                   rf.me, "AdvanceCommit", rf.log.getCommitted(), quorum)
+                   rf.me, "AdvanceCommit", rf.currentTerm, rf.log.getCommitted(), quorum)
     rf.log.commit(quorum, rf.currentTerm, rf.voteFor)
     rf.cond.Signal()
   }
