@@ -164,7 +164,7 @@ func (rf *Raft) tickElection() {
   rf.election_tick++
   if rf.election_tick >= rf.election_tick_max {
     if rf.role == RoleFollower || rf.role == RoleCandidate {
-      log.Printf("WHO [%d] TAG [%s] - election tick up to max, start vote", rf.me, "TickElection")
+      DPrintf("WHO [%d] TAG [%s] - election tick up to max, start vote", rf.me, "TickElection")
       rf.becomeCandidate()
       rf.broadcastRequestVote()
     } else {
@@ -235,13 +235,17 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
   r := bytes.NewBuffer(data)
   decoder := labgob.NewDecoder(r)
-  if decoder.Decode(&rf.currentTerm) != nil {
+  var term int
+  if decoder.Decode(&term) != nil {
     panic("Decode [currentTerm] failed.")
   }
+  rf.currentTerm = term
 
-  if decoder.Decode(&rf.voteFor) != nil {
+  var voteFor int
+  if decoder.Decode(&voteFor) != nil {
     panic("Decode [voteFor] failed.")
   }
+  rf.voteFor = voteFor
 
   var num int
   if decoder.Decode(&num) != nil {
@@ -249,9 +253,7 @@ func (rf *Raft) readPersist(data []byte) {
   }
 
   for i := 0 ; i < num; i++ {
-    entry := Entry {
-    }
-
+    var entry Entry
     if decoder.Decode(&entry) != nil {
       panic("Decode [entry] failed.")
     }
@@ -263,9 +265,9 @@ func (rf *Raft) quorum() int { return len(rf.peers)/2 + 1 }
 
 func (rf *Raft) poll(id int, vote bool) int {
   if vote {
-    log.Printf("WHO [%d] TAG [%s] - received vote from [%x] at term [%d]", rf.me, "VoteSendRecv",  id, rf.currentTerm)
+    DPrintf("WHO [%d] TAG [%s] - received vote from [%x] at term [%d]", rf.me, "VoteSendRecv",  id, rf.currentTerm)
   } else {
-    log.Printf("WHO [%d] TAG [%s] - rejected from [%x] at term [%d]", rf.me, "VoteSendRecv", id, rf.currentTerm)
+    DPrintf("WHO [%d] TAG [%s] - rejected from [%x] at term [%d]", rf.me, "VoteSendRecv", id, rf.currentTerm)
   }
 
   if _, ok := rf.votes[id]; !ok {
@@ -310,19 +312,19 @@ func (rf *Raft) RequestVote(request *RequestVoteArgs, reply *RequestVoteReply) {
   rf.mu.Lock()
   defer rf.mu.Unlock()
 
-  log.Printf("WHO [%d] TAG [%s] - recv vote rquest From: [%d]\n", rf.me, "VoteRecv", request.CandidateId)
+  DPrintf("WHO [%d] TAG [%s] - recv vote rquest From: [%d]\n", rf.me, "VoteRecv", request.CandidateId)
 
   reply.Term = rf.currentTerm
   reply.From = rf.me
   reply.VoteGranted = false
 
   if request.Term < rf.currentTerm {
-    log.Printf("WHO [%d] TAG [%s] - recv vote request From: [%d], RequestTerm: [%d] smaller than CurrentTerm: [%d]",
+    DPrintf("WHO [%d] TAG [%s] - recv vote request From: [%d], RequestTerm: [%d] smaller than CurrentTerm: [%d]",
               rf.me, "VoteRecv", request.CandidateId, request.Term, rf.currentTerm)
     return
   }
   if request.Term > rf.currentTerm {
-    log.Printf("WHO [%d] TAG [%s] - recv vote request From: [%d] with higher term, RequestTerm: [%d], CurrentTerm: [%d] become follower",
+    DPrintf("WHO [%d] TAG [%s] - recv vote request From: [%d] with higher term, RequestTerm: [%d], CurrentTerm: [%d] become follower",
                 rf.me, "VoteRecv", request.CandidateId, request.Term, rf.currentTerm)
     rf.becomeFollower(request.Term, NONE)
   }
@@ -332,7 +334,7 @@ func (rf *Raft) RequestVote(request *RequestVoteArgs, reply *RequestVoteReply) {
                 (request.LastLogTerm == rf.log.getLastLogTerm() &&
                  request.LastLogIndex >= rf.log.getLastLogIndex()))
   if (logOK && (rf.voteFor == NONE || rf.voteFor == request.CandidateId)) {
-    log.Printf("WHO [%d] TAG [%s] - grant vote to [%d] in term [%d]", rf.me, "VoteRecv", request.CandidateId, rf.currentTerm)
+    DPrintf("WHO [%d] TAG [%s] - grant vote to [%d] in term [%d]", rf.me, "VoteRecv", request.CandidateId, rf.currentTerm)
     reply.Term = rf.currentTerm
     reply.VoteGranted = true
 
@@ -395,11 +397,11 @@ func (rf *Raft) broadcastRequestVote() {
 
     // 并行的发出rpc请求
     go func(arg RequestVoteArgs, index int) {
-      log.Printf("WHO [%d] TAG [%s] - send request vote to [%d]", rf.me, "VoteSend", index)
+      DPrintf("WHO [%d] TAG [%s] - send request vote to [%d]", rf.me, "VoteSend", index)
       var reply RequestVoteReply
       ok := rf.sendRequestVote(index, &arg, &reply)
       // timeout or what ever
-      log.Printf("WHO [%d] TAG [%s] - request vote to [%d], rpc status [%v]", rf.me, "VoteSendRecv", index, ok)
+      DPrintf("WHO [%d] TAG [%s] - request vote to [%d], rpc status [%v]", rf.me, "VoteSendRecv", index, ok)
       if !ok {
         return
       }
@@ -407,20 +409,20 @@ func (rf *Raft) broadcastRequestVote() {
       defer rf.mu.Unlock()
       // 判断请求发出之前的状态 - 有可能状态已经改变, 忽略这次的请求
       if (arg.Term != rf.currentTerm || rf.role != RoleCandidate) {
-        log.Printf("WHO [%d] TAG [%s] - to [%d] rpc result discard. RequestTerm: [%d], CurrentTerm: [%d], Role: [%d]",
+        DPrintf("WHO [%d] TAG [%s] - to [%d] rpc result discard. RequestTerm: [%d], CurrentTerm: [%d], Role: [%d]",
                    rf.me, "VoteSendRecv", index, arg.Term, rf.currentTerm, rf.role)
         return
       }
 
       // 如果reply的Term小于当前的Term, 则忽略
       if reply.Term < rf.currentTerm {
-        log.Printf("WHO [%d] TAG [%s] - to [%d] get smaller term. ReplyTerm: [%d], CurrentTerm: [%d], Role: [%d]",
+        DPrintf("WHO [%d] TAG [%s] - to [%d] get smaller term. ReplyTerm: [%d], CurrentTerm: [%d], Role: [%d]",
                    rf.me, "VoteSendRecv", index, reply.Term, rf.currentTerm, rf.role)
         return
       }
       // 如果reply的Term大于当前的Term, 则成为Follower
       if reply.Term > rf.currentTerm {
-        log.Printf("WHO [%d] TAG [%s] - to [%d] get larger term. ReplyTerm: [%d], CurrentTerm: [%d], Role: [%d]",
+        DPrintf("WHO [%d] TAG [%s] - to [%d] get larger term. ReplyTerm: [%d], CurrentTerm: [%d], Role: [%d]",
                    rf.me, "VoteSendRecv", index, reply.Term, rf.currentTerm, rf.role)
         rf.becomeFollower(reply.Term, NONE)
         return
@@ -428,7 +430,7 @@ func (rf *Raft) broadcastRequestVote() {
 
       // Term相等的时候，判断投票
       if rf.poll(reply.From, reply.VoteGranted) >= rf.quorum() {
-        log.Printf("WHO [%d] TAG [%s] - become leader in term [%d]", rf.me, "VoteSendRecv", rf.currentTerm)
+        DPrintf("WHO [%d] TAG [%s] - become leader in term [%d]", rf.me, "VoteSendRecv", rf.currentTerm)
         rf.becomeLeader()
         rf.broadcastAppendEntries()
       }
@@ -439,7 +441,7 @@ func (rf *Raft) broadcastRequestVote() {
 
 func (rf *Raft) broadcastAppendEntries() {
   // no need lock!!!
-  log.Printf("WHO [%d] TAG [%s] - start to broadcast", rf.me, "AppSend")
+  DPrintf("WHO [%d] TAG [%s] - start to broadcast", rf.me, "AppSend")
 
   // 对于每一个peer, 发送append消息
   for peerIndex, peer := range rf.peerInfo {
@@ -455,7 +457,7 @@ func (rf *Raft) broadcastAppendEntries() {
     lastLogIndex := rf.log.getLastLogIndex();
     prevLogIndex := peer.nextIndex - 1;
     if !(prevLogIndex <= lastLogIndex) {
-      log.Printf("Index: %d, PrevLogIndex: %d, LastLogIndex: %d", peerIndex, prevLogIndex, lastLogIndex)
+      DPrintf("Index: %d, PrevLogIndex: %d, LastLogIndex: %d", peerIndex, prevLogIndex, lastLogIndex)
       continue
     }
 
@@ -477,10 +479,10 @@ func (rf *Raft) broadcastAppendEntries() {
 
     // send the append parallel
     go func(arg AppendEntriesArgs, toId int) {
-      log.Printf("WHO [%d] TAG [%s] - prepare to send append message to [%d]", rf.me, "AppendSend", toId)
+      DPrintf("WHO [%d] TAG [%s] - prepare to send append message to [%d]", rf.me, "AppendSend", toId)
       var reply AppendEntriesReply
       success := rf.sendAppendEntries(toId, &arg, &reply)
-      log.Printf("WHO [%d] TAG [%s] - append rpc to [%d] status is [%v].", rf.me, "AppendSendRecv", toId, success)
+      DPrintf("WHO [%d] TAG [%s] - append rpc to [%d] status is [%v].", rf.me, "AppendSendRecv", toId, success)
       if !success {
         return
       }
@@ -491,27 +493,27 @@ func (rf *Raft) broadcastAppendEntries() {
 
       // 如果当前的term和请求前不一样，或者role已经变化则忽略reply
       if rf.currentTerm != arg.Term || rf.role != RoleLeader {
-        log.Printf("WHO [%d] TAG [%s] - state has has changed. RequestTerm: [%d], CurrentTerm: [%d], role: [%d]",
+        DPrintf("WHO [%d] TAG [%s] - state has has changed. RequestTerm: [%d], CurrentTerm: [%d], role: [%d]",
                     rf.me, "AppendSendRecv", arg.Term, rf.currentTerm, rf.role)
         return
       }
 
       // 如果reply的Term小于当前的term, 则忽略
       if reply.Term < rf.currentTerm {
-        log.Printf("WHO [%d] TAG [%s] - to [%d] get smaller term. ReplyTerm: [%d], CurrentTerm: [%d], Role: [%d]",
+        DPrintf("WHO [%d] TAG [%s] - to [%d] get smaller term. ReplyTerm: [%d], CurrentTerm: [%d], Role: [%d]",
                    rf.me, "AppendSendRecv", toId, reply.Term, rf.currentTerm, rf.role)
         return
       }
 
       // 如果reply的Term大于currentTerm，则转变为follower
       if reply.Term > rf.currentTerm {
-        log.Printf("WHO [%d] TAG [%s] - to [%d] get larger term. ReplyTerm: [%d], CurrentTerm: [%d], Role: [%d]",
+        DPrintf("WHO [%d] TAG [%s] - to [%d] get larger term. ReplyTerm: [%d], CurrentTerm: [%d], Role: [%d]",
                    rf.me, "AppendSendRecv", toId, reply.Term, rf.currentTerm, rf.role)
         rf.becomeFollower(reply.Term, NONE)
         return
       }
 
-      log.Printf("WHO [%d] TAG [%s] - to [%d] return: success: [%v], LastLogIndex: [%d]",
+      DPrintf("WHO [%d] TAG [%s] - to [%d] return: success: [%v], LastLogIndex: [%d]",
                   rf.me, "AppendSendRecv", toId, reply.Success, reply.LastLogIndex)
 
       // 如果返回成功，则更新matchIndex和nextIndex, 并尝试commit
@@ -552,7 +554,7 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, reply *AppendEntriesRe
   rf.mu.Lock()
   defer rf.mu.Unlock()
 
-  log.Printf("WHO [%d] TAG [%s] - received appendentries request from [%d]", rf.me, "AppendRecv", request.Leader)
+  DPrintf("WHO [%d] TAG [%s] - received appendentries request from [%d]", rf.me, "AppendRecv", request.Leader)
 
   reply.Term = rf.currentTerm
   reply.Success = false
@@ -560,7 +562,7 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, reply *AppendEntriesRe
 
   // 如果请求的Term小于当前的Term, 忽略
   if (request.Term < rf.currentTerm) {
-    log.Printf("WHO [%d] TAG [%s] - received request from [%d] term smaller. RequestTerm: [%d], CurrentTerm: [%d]",
+    DPrintf("WHO [%d] TAG [%s] - received request from [%d] term smaller. RequestTerm: [%d], CurrentTerm: [%d]",
                 rf.me, "AppendRecv", request.Leader, request.Term, rf.currentTerm)
 
     return
@@ -568,19 +570,19 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, reply *AppendEntriesRe
 
   // 如果请求的Term大于当前的Term, 则变更为Follower
   if (request.Term > rf.currentTerm) {
-    log.Printf("WHO [%d] TAG [%s] - received request from [%d] term larger. RequestTerm: [%d], CurrentTerm: [%d]",
+    DPrintf("WHO [%d] TAG [%s] - received request from [%d] term larger. RequestTerm: [%d], CurrentTerm: [%d]",
                 rf.me, "AppendRecv", request.Leader, request.Term, rf.currentTerm)
     reply.Term = request.Term
   }
 
   rf.becomeFollower(request.Term, request.Leader)
 
-  log.Printf("WHO [%d] TAG [%s] - leader: [%d], CurrentTerm: [%d] become follower",
+  DPrintf("WHO [%d] TAG [%s] - leader: [%d], CurrentTerm: [%d] become follower",
                 rf.me, "AppendRecv", request.Leader, rf.currentTerm)
 
   // 如果请求里面的PrevLogIndex大于lastLogIndex, 返回
   if (request.PrevLogIndex > rf.log.getLastLogIndex()) {
-    log.Printf("WHO [%d] TAG [%s] - RequestPrevLogIndex: [%d], MyLastLogIndex: [%d], return.",
+    DPrintf("WHO [%d] TAG [%s] - RequestPrevLogIndex: [%d], MyLastLogIndex: [%d], return.",
                 rf.me, "AppendRecv", request.PrevLogIndex, rf.log.getLastLogIndex())
     return
   }
@@ -589,7 +591,7 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, reply *AppendEntriesRe
   if request.PrevLogIndex >= rf.log.getStartLogIndex() {
     myTerm := rf.log.getEntry(request.PrevLogIndex).Term
     if myTerm != request.PrevLogTerm {
-      log.Printf("WHO [%d] TAG [%s] - log term mismatch. RequestPrevLogIndex: [%d], RequestPrevLogTerm: [%d], MyTerm: [%d]",
+      DPrintf("WHO [%d] TAG [%s] - log term mismatch. RequestPrevLogIndex: [%d], RequestPrevLogTerm: [%d], MyTerm: [%d]",
                 rf.me, "AppendRecv", request.PrevLogIndex, request.PrevLogTerm, myTerm)
       return
     }
@@ -644,7 +646,7 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, reply *AppendEntriesRe
 
   rf.persist()
 
-  log.Printf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. reply status. Success: [%v], LastLogIndex: [%d]",
+  DPrintf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. reply status. Success: [%v], LastLogIndex: [%d]",
               rf.me, "AppendRecv", rf.currentTerm, reply.Success, reply.LastLogIndex)
 }
 
@@ -679,7 +681,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
   term = rf.currentTerm
   if rf.role != RoleLeader {
     isLeader = false
-    log.Printf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. Role: [%d]. Not leader, start return false",
+    DPrintf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. Role: [%d]. Not leader, start return false",
               rf.me, "Start", rf.currentTerm, rf.role)
   } else {
     isLeader = true
@@ -687,7 +689,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
     rf.log.appendCommand(rf.currentTerm, index, command)
     rf.persist()
     rf.broadcastAppendEntries()
-    log.Printf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. Role: [%d]. Leader submit proposal, Index: [%d]",
+    DPrintf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. Role: [%d]. Leader submit proposal, Index: [%d]",
               rf.me, "Start", rf.currentTerm, rf.role, index)
   }
 
@@ -708,7 +710,7 @@ func (rf *Raft) Kill() {
 func (rf *Raft) resetElectionTimer() {
   rf.election_tick = 0
   rf.election_tick_max = ElectionTickMax + rand.Int() % 7
-  log.Printf("WHO [%d] TAG [%s] - election_tick_max set to: [%d]", rf.me, "ResetElectionTimer", rf.election_tick_max)
+  DPrintf("WHO [%d] TAG [%s] - election_tick_max set to: [%d]", rf.me, "ResetElectionTimer", rf.election_tick_max)
 }
 
 
@@ -747,7 +749,7 @@ func (rf *Raft) ApplyThread() {
     rf.log.setApplied(applied)
     rf.mu.Unlock()
 
-    log.Printf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. AppliedIndex: [%v]",
+    DPrintf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. AppliedIndex: [%v]",
                 rf.me, "ApplyThread", rf.currentTerm, indexSlice)
 
     // may block, so write it without mutex
@@ -761,7 +763,7 @@ func (rf *Raft) ApplyThread() {
 func (rf *Raft) advanceCommit() {
   quorum := rf.quorumMatchIndex()
   if (quorum > rf.log.getCommitted()) {
-    log.Printf("WHO [%d] TAG [%s] - CurrentTerm: [%d], will commit from [%d] to [%d]",
+    DPrintf("WHO [%d] TAG [%s] - CurrentTerm: [%d], will commit from [%d] to [%d]",
                    rf.me, "AdvanceCommit", rf.currentTerm, rf.log.getCommitted(), quorum)
     rf.log.commit(quorum, rf.currentTerm, rf.voteFor)
     rf.cond.Signal()
@@ -779,7 +781,7 @@ func (rf *Raft) quorumMatchIndex() int {
       buf[index] = peer.matchIndex
     }
   }
-  log.Printf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. quorum match index: [%v]",
+  DPrintf("WHO [%d] TAG [%s] - CurrentTerm: [%d]. quorum match index: [%v]",
               rf.me, "QuorumMatchIndex", rf.currentTerm, buf)
   sort.Sort(buf)
   return buf[len(buf)/2]

@@ -8,6 +8,7 @@ import "math/big"
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+  lastIndex int
 }
 
 func nrand() int64 {
@@ -21,6 +22,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+  ck.lastIndex = int(nrand()) % len(ck.servers)
 	return ck
 }
 
@@ -37,9 +39,30 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-
 	// You will have to modify this function.
-	return ""
+  args := GetArgs {
+    Key: key,
+  }
+  var value string
+  for {
+    var reply GetReply
+    ok := ck.servers[ck.lastIndex].Call("KVServer.Get", &args, &reply)
+    // rpc failure
+    if !ok {
+      continue
+    }
+
+    // wrong leader
+    if reply.WrongLeader {
+      ck.lastIndex = int(nrand()) % len(ck.servers)
+      continue
+    }
+
+    value = reply.Value
+    break
+  }
+
+	return value
 }
 
 //
@@ -54,6 +77,28 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+  args := PutAppendArgs {
+    Key: key,
+    Value: value,
+    Op: op,
+  }
+  for {
+    var reply PutAppendReply
+    ok := ck.servers[ck.lastIndex].Call("KVServer.PutAppend", &args, &reply)
+    // rpc failure
+    if !ok {
+      continue
+    }
+
+    // wrong leader
+    if reply.WrongLeader {
+      ck.lastIndex = int(nrand()) % len(ck.servers)
+      continue
+    }
+
+    break
+  }
+  // now we get the reply
 }
 
 func (ck *Clerk) Put(key string, value string) {

@@ -1,6 +1,7 @@
 package raftkv
 
 import (
+  "fmt"
 	"labgob"
 	"labrpc"
 	"log"
@@ -22,6 +23,9 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+  Type            string        // "get" or "put" or "append"
+  Key             string
+  Value           string
 }
 
 type KVServer struct {
@@ -33,15 +37,60 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+  kvMap   map[string]string     // holder for the result map
 }
 
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+  op := Op {
+    Type: "Get",
+    Key: args.Key,
+  }
+
+  _, _, isLeader := kv.rf.Start(op)
+  if !isLeader {
+    reply.WrongLeader = true
+    reply.Err = Err(fmt.Sprintf("%v not leader", kv.me))
+  } else {
+    select {
+      case <-kv.applyCh:
+        kv.mu.Lock()
+        value, ok := kv.kvMap[op.Key]
+        kv.mu.Unlock()
+        reply.WrongLeader = false
+        if !ok {
+          reply.Value = ""
+        } else {
+          reply.Value = value
+        }
+    }
+  }
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+  op := Op {
+    Key: args.Key,
+    Value: args.Value,
+    Type: args.Op,
+  }
+
+  _, _, isLeader := kv.rf.Start(op)
+  if !isLeader {
+    reply.WrongLeader = true
+    reply.Err = Err(fmt.Sprintf("%v not leader", kv.me))
+  } else {
+    select {
+      case <-kv.applyCh:
+      kv.mu.Lock()
+      if op.Type == "Append" {
+        kv.kvMap[op.Key] = kv.kvMap[op.Key] + op.Value
+      } else {
+        kv.kvMap[op.Key] = op.Value
+      }
+      kv.mu.Unlock()
+    }
+  }
 }
 
 //
@@ -82,6 +131,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+  kv.kvMap = make(map[string]string)
 
 	// You may need initialization code here.
 
